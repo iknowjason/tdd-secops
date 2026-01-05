@@ -156,14 +156,13 @@ class SentinelTestFramework:
         with open(f"test_data/{data_file}", 'r') as file:
             test_data = json.load(file)
         
+        # Always override TimeGenerated to ensure data falls within the rule's query period
         if isinstance(test_data, dict):
-            if 'TimeGenerated' not in test_data:
-                test_data['TimeGenerated'] = datetime.utcnow().isoformat()
+            test_data['TimeGenerated'] = datetime.utcnow().isoformat()
             test_data = [test_data]
         elif isinstance(test_data, list):
             for entry in test_data:
-                if 'TimeGenerated' not in entry:
-                    entry['TimeGenerated'] = datetime.utcnow().isoformat()
+                entry['TimeGenerated'] = datetime.utcnow().isoformat()
         
         print(f"Ingesting test data into table: {table_name}")
         
@@ -510,13 +509,13 @@ class SentinelTestFramework:
             
             print(f"Waiting for rule {test_rule_id} to execute on its schedule (queryFrequency: PT5M)")
             print("Waiting for rule to execute at least once (with 5-minute frequency)")
-            time.sleep(310)
-            #time.sleep(30)
+            time.sleep(420)  # 7 minutes to account for log ingestion + rule scheduling latency
 
 
             found_alert, incidents_detail = self.check_for_alerts(
                 test_rule_id,
                 rule_display_name,
+                timeout=180,  # Poll for 3 minutes for incident to appear
                 created_after=test_start_time if test_case['expected_result'] == 'no_alert' else None
             )
             
