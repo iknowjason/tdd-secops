@@ -311,7 +311,7 @@ class SentinelTestFramework:
             print(f"Rule creation payload: {json.dumps({k: v for k, v in test_rule.items() if k != 'query'}, indent=2)}")
             raise
 
-    def check_for_alerts(self, rule_id, rule_display_name=None, timeout=5, created_after=None):
+    def check_for_alerts(self, rule_id, rule_display_name=None, timeout=120, created_after=None):
         print(f"Checking for incidents related to rule: {rule_id}")
         start_time = time.time()
         incidents_found = []
