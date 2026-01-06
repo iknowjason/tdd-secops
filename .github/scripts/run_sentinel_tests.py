@@ -311,7 +311,7 @@ class SentinelTestFramework:
             print(f"Rule creation payload: {json.dumps({k: v for k, v in test_rule.items() if k != 'query'}, indent=2)}")
             raise
 
-    def check_for_alerts(self, rule_id, rule_display_name=None, timeout=120, created_after=None):
+    def check_for_alerts(self, rule_id, rule_display_name=None, timeout=180, created_after=None):
         print(f"Checking for incidents related to rule: {rule_id}")
         start_time = time.time()
         incidents_found = []
@@ -504,14 +504,17 @@ class SentinelTestFramework:
             elif 'name' in prod_rule:
                 rule_display_name = f"TEST - {prod_rule['name']}"
 
-            test_rule_id = self.clone_rule_for_testing(prod_rule, test_config['test_table'])
-            
+            # Ingest data FIRST and wait for it to be queryable in Log Analytics
             self.ingest_test_data(test_config['test_table'], test_case['data_file'])
-            
+            print("Waiting for data to be queryable in Log Analytics...")
+            time.sleep(180)  # Wait 3 min for data to become queryable
+
+            # Now create the rule - data will already be available when rule executes
+            test_rule_id = self.clone_rule_for_testing(prod_rule, test_config['test_table'])
+
             print(f"Waiting for rule {test_rule_id} to execute on its schedule (queryFrequency: PT5M)")
             print("Waiting for rule to execute at least once (with 5-minute frequency)")
-            time.sleep(310)
-            #time.sleep(30)
+            time.sleep(330)  # Wait 5.5 min for rule execution
 
 
             found_alert, incidents_detail = self.check_for_alerts(
