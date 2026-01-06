@@ -533,9 +533,12 @@ class SentinelTestFramework:
                 item['test_case']['data_file']
             )
 
+        # Short wait for table to be registered in Azure before rule creation
+        # This allows query validation to succeed when creating the rule
+        print("Waiting for table registration in Azure...")
+        time.sleep(30)
+
         # Step 2: Create all test rules for this batch
-        # Note: No wait needed here - data will be queryable by the time
-        # the rule executes (5+ min), which exceeds Log Analytics ingestion delay (2-5 min)
         print("\n--- Step 2: Creating test rules ---")
         test_start_time = datetime.utcnow()
         print(f"Test start time: {test_start_time.isoformat()}")
