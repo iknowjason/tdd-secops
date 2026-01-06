@@ -586,9 +586,14 @@ class SentinelTestFramework:
                 continue
 
             try:
+                # Shorter timeout for negative tests (just confirming no incident appears)
+                # Longer timeout for positive tests (waiting for incident to be created)
+                timeout = 60 if test_case['expected_result'] == 'no_alert' else 180
+
                 found_alert, incidents_detail = self.check_for_alerts(
                     item['test_rule_id'],
                     item['rule_display_name'],
+                    timeout=timeout,
                     created_after=item['start_time'] if test_case['expected_result'] == 'no_alert' else None
                 )
 
