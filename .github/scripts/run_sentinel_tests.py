@@ -533,10 +533,9 @@ class SentinelTestFramework:
                 item['test_case']['data_file']
             )
 
-        print("Waiting for data to be queryable in Log Analytics...")
-        time.sleep(180)  # Wait 3 min for data to become queryable
-
         # Step 2: Create all test rules for this batch
+        # Note: No wait needed here - data will be queryable by the time
+        # the rule executes (5+ min), which exceeds Log Analytics ingestion delay (2-5 min)
         print("\n--- Step 2: Creating test rules ---")
         test_start_time = datetime.utcnow()
         print(f"Test start time: {test_start_time.isoformat()}")

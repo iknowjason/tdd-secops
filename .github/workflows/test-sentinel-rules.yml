@@ -22,7 +22,7 @@ jobs:
           pip install azure-identity azure-mgmt-securityinsight azure-monitor-ingestion pyyaml
 
       - name: Run Test Framework
-        run: python .github/scripts/run_sentinel_tests.py
+        run: python -u .github/scripts/run_sentinel_tests.py
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
