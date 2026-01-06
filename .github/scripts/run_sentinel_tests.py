@@ -427,7 +427,11 @@ class SentinelTestFramework:
             print(f"Warning: Failed to delete test rule {rule_id}: {e}")
 
     def run_tests(self):
-        """Run all tests in parallel for faster execution"""
+        """Run all tests using semi-parallel execution.
+
+        Negative tests run together first, then positive tests run together.
+        This prevents positive test data from causing false alerts in negative tests.
+        """
         test_files = self.find_test_files()
 
         if not test_files:
@@ -441,7 +445,8 @@ class SentinelTestFramework:
         }
 
         # Collect all test cases across all test files
-        all_test_cases = []
+        negative_tests = []
+        positive_tests = []
 
         for test_file in test_files:
             print(f"\n=== Loading test: {test_file} ===")
@@ -460,37 +465,83 @@ class SentinelTestFramework:
             }
             results["tests"].append(test_result)
 
+            # Separate test cases by expected result
             for test_case in test_config['test_cases']:
-                all_test_cases.append({
+                test_item = {
                     "test_case": test_case,
                     "prod_rule": prod_rule,
                     "test_config": test_config,
                     "test_result": test_result
-                })
+                }
+                if test_case['expected_result'] == 'no_alert':
+                    negative_tests.append(test_item)
+                else:
+                    positive_tests.append(test_item)
 
-        if not all_test_cases:
+        total_tests = len(negative_tests) + len(positive_tests)
+        if total_tests == 0:
             print("No test cases found")
             return
 
-        print(f"\n=== Running {len(all_test_cases)} test cases in PARALLEL ===")
+        print(f"\n=== Running {total_tests} test cases (Semi-Parallel Mode) ===")
+        print(f"    Negative tests: {len(negative_tests)}")
+        print(f"    Positive tests: {len(positive_tests)}")
 
-        # PHASE 1: Ingest all test data
-        print("\n--- Phase 1: Ingesting all test data ---")
-        for item in all_test_cases:
+        # Run negative tests first (no positive data in table)
+        if negative_tests:
+            print("\n" + "="*60)
+            print("=== PHASE A: Running all NEGATIVE tests in parallel ===")
+            print("="*60)
+            self._run_test_batch(negative_tests, results)
+
+        # Then run positive tests (negative data won't trigger alerts anyway)
+        if positive_tests:
+            print("\n" + "="*60)
+            print("=== PHASE B: Running all POSITIVE tests in parallel ===")
+            print("="*60)
+            self._run_test_batch(positive_tests, results)
+
+        # Save test results to file
+        with open('test_results.json', 'w') as f:
+            json.dump(results, f, indent=2)
+
+        # Print summary
+        print("\n=== Test Summary ===")
+        print(f"Passed: {results['passed']}")
+        print(f"Failed: {results['failed']}")
+        print(f"Total: {results['passed'] + results['failed']}")
+        print(f"Detailed results saved to test_results.json")
+
+        # Exit with non-zero code if any tests failed
+        if results['failed'] > 0:
+            exit(1)
+
+    def _run_test_batch(self, test_items, results):
+        """Run a batch of test cases in parallel.
+
+        All tests in the batch share the same wait periods for data ingestion
+        and rule execution, significantly reducing total test time.
+        """
+        if not test_items:
+            return
+
+        # Step 1: Ingest all test data for this batch
+        print("\n--- Step 1: Ingesting test data ---")
+        for item in test_items:
             self.ingest_test_data(
                 item['test_config']['test_table'],
                 item['test_case']['data_file']
             )
 
-        print("Waiting for all data to be queryable in Log Analytics...")
-        time.sleep(180)  # Single wait for all data
+        print("Waiting for data to be queryable in Log Analytics...")
+        time.sleep(180)  # Wait 3 min for data to become queryable
 
-        # PHASE 2: Create all test rules
-        print("\n--- Phase 2: Creating all test rules ---")
+        # Step 2: Create all test rules for this batch
+        print("\n--- Step 2: Creating test rules ---")
         test_start_time = datetime.utcnow()
         print(f"Test start time: {test_start_time.isoformat()}")
 
-        for item in all_test_cases:
+        for item in test_items:
             prod_rule = item['prod_rule']
             test_config = item['test_config']
 
@@ -509,21 +560,20 @@ class SentinelTestFramework:
                 item['test_rule_id'] = None
                 item['error'] = str(e)
 
-        # PHASE 3: Wait for rules to execute (single wait for all)
-        print("\n--- Phase 3: Waiting for rules to execute ---")
-        print("Waiting for all rules to execute at least once (5-minute frequency)...")
-        time.sleep(330)  # Single wait for all rules
+        # Step 3: Wait for rules to execute
+        print("\n--- Step 3: Waiting for rules to execute ---")
+        print("Waiting for rules to execute at least once (5-minute frequency)...")
+        time.sleep(330)  # Wait 5.5 min for rule execution
 
-        # PHASE 4: Check for incidents for all rules
-        print("\n--- Phase 4: Checking for incidents ---")
-        for item in all_test_cases:
+        # Step 4: Check for incidents
+        print("\n--- Step 4: Checking for incidents ---")
+        for item in test_items:
             test_case = item['test_case']
             test_result = item['test_result']
 
             print(f"\nChecking: {test_case['name']}")
 
             if item.get('test_rule_id') is None:
-                # Rule creation failed
                 results["failed"] += 1
                 test_result["test_cases"].append({
                     "name": test_case['name'],
@@ -569,26 +619,11 @@ class SentinelTestFramework:
                     "incidents_found": []
                 })
 
-        # PHASE 5: Cleanup all test rules
-        print("\n--- Phase 5: Cleaning up test rules ---")
-        for item in all_test_cases:
+        # Step 5: Cleanup all test rules in this batch
+        print("\n--- Step 5: Cleaning up test rules ---")
+        for item in test_items:
             if item.get('test_rule_id'):
                 self.cleanup_test_rule(item['test_rule_id'])
-
-        # Save test results to file
-        with open('test_results.json', 'w') as f:
-            json.dump(results, f, indent=2)
-
-        # Print summary
-        print("\n=== Test Summary ===")
-        print(f"Passed: {results['passed']}")
-        print(f"Failed: {results['failed']}")
-        print(f"Total: {results['passed'] + results['failed']}")
-        print(f"Detailed results saved to test_results.json")
-
-        # Exit with non-zero code if any tests failed
-        if results['failed'] > 0:
-            exit(1)
 
 if __name__ == "__main__":
 
