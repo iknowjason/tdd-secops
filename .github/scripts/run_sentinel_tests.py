@@ -427,134 +427,168 @@ class SentinelTestFramework:
             print(f"Warning: Failed to delete test rule {rule_id}: {e}")
 
     def run_tests(self):
-        """Run all tests"""
+        """Run all tests in parallel for faster execution"""
         test_files = self.find_test_files()
-        
+
         if not test_files:
             print("No test files found in the tests directory")
             return
-            
+
         results = {
             "passed": 0,
             "failed": 0,
             "tests": []
         }
-        
+
+        # Collect all test cases across all test files
+        all_test_cases = []
+
         for test_file in test_files:
-            print(f"\n=== Running test: {test_file} ===")
+            print(f"\n=== Loading test: {test_file} ===")
             test_config = self.load_test_config(test_file)
-            
+
             try:
                 prod_rule = self.load_production_rule(test_config['production_rule'])
             except Exception as e:
                 print(f"Error loading production rule: {e}")
                 continue
-                
+
             test_result = {
                 "name": test_config['name'],
                 "file": test_file,
                 "test_cases": []
             }
-            
-            # Organize test cases into positive and negative tests
-            positive_cases = [tc for tc in test_config['test_cases'] if tc['expected_result'] == 'alert']
-            negative_cases = [tc for tc in test_config['test_cases'] if tc['expected_result'] == 'no_alert']
-        
-            # Run negative test cases first 
-            if negative_cases:
-                print("\n=== Running Negative Test Cases (expected NOT to trigger alerts) ===")
-                for test_case in negative_cases:
-                    self._run_test_case(test_case, prod_rule, test_config, test_result, results)
-    
-            # Then run positive 
-            if positive_cases:
-                print("\n=== Running Positive Test Cases (expected to trigger alerts) ===")
-                for test_case in positive_cases:
-                    self._run_test_case(test_case, prod_rule, test_config, test_result, results)
-            
             results["tests"].append(test_result)
-        
+
+            for test_case in test_config['test_cases']:
+                all_test_cases.append({
+                    "test_case": test_case,
+                    "prod_rule": prod_rule,
+                    "test_config": test_config,
+                    "test_result": test_result
+                })
+
+        if not all_test_cases:
+            print("No test cases found")
+            return
+
+        print(f"\n=== Running {len(all_test_cases)} test cases in PARALLEL ===")
+
+        # PHASE 1: Ingest all test data
+        print("\n--- Phase 1: Ingesting all test data ---")
+        for item in all_test_cases:
+            self.ingest_test_data(
+                item['test_config']['test_table'],
+                item['test_case']['data_file']
+            )
+
+        print("Waiting for all data to be queryable in Log Analytics...")
+        time.sleep(180)  # Single wait for all data
+
+        # PHASE 2: Create all test rules
+        print("\n--- Phase 2: Creating all test rules ---")
+        test_start_time = datetime.utcnow()
+        print(f"Test start time: {test_start_time.isoformat()}")
+
+        for item in all_test_cases:
+            prod_rule = item['prod_rule']
+            test_config = item['test_config']
+
+            if 'displayName' in prod_rule:
+                item['rule_display_name'] = f"TEST - {prod_rule['displayName']}"
+            elif 'name' in prod_rule:
+                item['rule_display_name'] = f"TEST - {prod_rule['name']}"
+            else:
+                item['rule_display_name'] = "TEST - Unknown Rule"
+
+            try:
+                item['test_rule_id'] = self.clone_rule_for_testing(prod_rule, test_config['test_table'])
+                item['start_time'] = test_start_time
+            except Exception as e:
+                print(f"❌ Error creating rule for {item['test_case']['name']}: {e}")
+                item['test_rule_id'] = None
+                item['error'] = str(e)
+
+        # PHASE 3: Wait for rules to execute (single wait for all)
+        print("\n--- Phase 3: Waiting for rules to execute ---")
+        print("Waiting for all rules to execute at least once (5-minute frequency)...")
+        time.sleep(330)  # Single wait for all rules
+
+        # PHASE 4: Check for incidents for all rules
+        print("\n--- Phase 4: Checking for incidents ---")
+        for item in all_test_cases:
+            test_case = item['test_case']
+            test_result = item['test_result']
+
+            print(f"\nChecking: {test_case['name']}")
+
+            if item.get('test_rule_id') is None:
+                # Rule creation failed
+                results["failed"] += 1
+                test_result["test_cases"].append({
+                    "name": test_case['name'],
+                    "passed": False,
+                    "error": item.get('error', 'Rule creation failed'),
+                    "incidents_found": []
+                })
+                continue
+
+            try:
+                found_alert, incidents_detail = self.check_for_alerts(
+                    item['test_rule_id'],
+                    item['rule_display_name'],
+                    created_after=item['start_time'] if test_case['expected_result'] == 'no_alert' else None
+                )
+
+                expected_alert = test_case['expected_result'] == 'alert'
+                case_passed = found_alert == expected_alert
+
+                if case_passed:
+                    print(f"✅ Test case passed: {test_case['name']}")
+                    results["passed"] += 1
+                else:
+                    print(f"❌ Test case failed: {test_case['name']}")
+                    print(f"   Expected {'an alert' if expected_alert else 'no alert'}, but {'found an alert' if found_alert else 'found no alert'}")
+                    results["failed"] += 1
+
+                test_result["test_cases"].append({
+                    "name": test_case['name'],
+                    "passed": case_passed,
+                    "expected": test_case['expected_result'],
+                    "actual": "alert" if found_alert else "no_alert",
+                    "incidents_found": incidents_detail
+                })
+
+            except Exception as e:
+                print(f"❌ Error checking incidents for {test_case['name']}: {e}")
+                results["failed"] += 1
+                test_result["test_cases"].append({
+                    "name": test_case['name'],
+                    "passed": False,
+                    "error": str(e),
+                    "incidents_found": []
+                })
+
+        # PHASE 5: Cleanup all test rules
+        print("\n--- Phase 5: Cleaning up test rules ---")
+        for item in all_test_cases:
+            if item.get('test_rule_id'):
+                self.cleanup_test_rule(item['test_rule_id'])
+
         # Save test results to file
         with open('test_results.json', 'w') as f:
             json.dump(results, f, indent=2)
-            
+
         # Print summary
         print("\n=== Test Summary ===")
         print(f"Passed: {results['passed']}")
         print(f"Failed: {results['failed']}")
         print(f"Total: {results['passed'] + results['failed']}")
         print(f"Detailed results saved to test_results.json")
-        
+
         # Exit with non-zero code if any tests failed
         if results['failed'] > 0:
             exit(1)
-            
-    def _run_test_case(self, test_case, prod_rule, test_config, test_result, results):
-        print(f"\nRunning test case: {test_case['name']}")
-        test_rule_id = None
-        rule_display_name = None
-        
-        try:
-
-            test_start_time = datetime.utcnow()
-            print(f"Test start time: {test_start_time.isoformat()}")
-
-            if 'displayName' in prod_rule:
-                rule_display_name = f"TEST - {prod_rule['displayName']}"
-            elif 'name' in prod_rule:
-                rule_display_name = f"TEST - {prod_rule['name']}"
-
-            # Ingest data FIRST and wait for it to be queryable in Log Analytics
-            self.ingest_test_data(test_config['test_table'], test_case['data_file'])
-            print("Waiting for data to be queryable in Log Analytics...")
-            time.sleep(180)  # Wait 3 min for data to become queryable
-
-            # Now create the rule - data will already be available when rule executes
-            test_rule_id = self.clone_rule_for_testing(prod_rule, test_config['test_table'])
-
-            print(f"Waiting for rule {test_rule_id} to execute on its schedule (queryFrequency: PT5M)")
-            print("Waiting for rule to execute at least once (with 5-minute frequency)")
-            time.sleep(330)  # Wait 5.5 min for rule execution
-
-
-            found_alert, incidents_detail = self.check_for_alerts(
-                test_rule_id,
-                rule_display_name,
-                created_after=test_start_time if test_case['expected_result'] == 'no_alert' else None
-            )
-            
-            expected_alert = test_case['expected_result'] == 'alert'
-            case_passed = found_alert == expected_alert
-            
-            if case_passed:
-                print(f"✅ Test case passed: {test_case['name']}")
-                results["passed"] += 1
-            else:
-                print(f"❌ Test case failed: {test_case['name']}")
-                print(f"   Expected {'an alert' if expected_alert else 'no alert'}, but {'found an alert' if found_alert else 'found no alert'}")
-                results["failed"] += 1
-            
-            test_result["test_cases"].append({
-                "name": test_case['name'],
-                "passed": case_passed,
-                "expected": test_case['expected_result'],
-                "actual": "alert" if found_alert else "no_alert",
-                "incidents_found": incidents_detail
-            })
-            
-        except Exception as e:
-            print(f"❌ Error running test case: {e}")
-            results["failed"] += 1
-            test_result["test_cases"].append({
-                "name": test_case['name'],
-                "passed": False,
-                "error": str(e),
-                "incidents_found": []
-            })
-        
-        finally:
-            if test_rule_id:
-                self.cleanup_test_rule(test_rule_id)
 
 if __name__ == "__main__":
 
