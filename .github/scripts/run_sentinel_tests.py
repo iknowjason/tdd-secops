@@ -173,12 +173,19 @@ class SentinelTestFramework:
                 for entry in test_data:
                     entry['TimeGenerated'] = datetime.utcnow().isoformat()
 
-                self.logs_client.upload(
-                    rule_id=DCR_IMMUTABLEID,
-                    stream_name=stream_name,
-                    logs=test_data
-                )
-                print(f"Successfully ingested sample {i+1}/{num_samples} from {data_file} into {table_name}")
+                # Use context manager to ensure data is flushed immediately
+                # (not buffered until script exit)
+                with LogsIngestionClient(
+                    endpoint=ENDPOINT_URI,
+                    credential=self.credential,
+                    logging_enable=True
+                ) as logs_client:
+                    logs_client.upload(
+                        rule_id=DCR_IMMUTABLEID,
+                        stream_name=stream_name,
+                        logs=test_data
+                    )
+                print(f"Successfully ingested and flushed sample {i+1}/{num_samples} from {data_file} into {table_name}")
 
                 # Pause between samples (but not after the last one)
                 if i < num_samples - 1:
