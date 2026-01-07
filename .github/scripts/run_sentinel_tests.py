@@ -521,15 +521,35 @@ class SentinelTestFramework:
             self._run_test_batch(positive_tests, results)
 
         # Save test results to file
+        print("\nSaving test results to test_results.json...")
         with open('test_results.json', 'w') as f:
             json.dump(results, f, indent=2)
+        print("Results saved successfully.")
 
-        # Print summary
-        print("\n=== Test Summary ===")
-        print(f"Passed: {results['passed']}")
-        print(f"Failed: {results['failed']}")
-        print(f"Total: {results['passed'] + results['failed']}")
-        print(f"Detailed results saved to test_results.json")
+        # Print detailed summary
+        print("\n" + "="*60)
+        print("=== TEST RESULTS SUMMARY ===")
+        print("="*60)
+
+        for test in results["tests"]:
+            print(f"\nTest File: {test['file']}")
+            print(f"Test Name: {test['name']}")
+            for tc in test["test_cases"]:
+                status = "PASS" if tc["passed"] else "FAIL"
+                icon = "[+]" if tc["passed"] else "[X]"
+                print(f"  {icon} {tc['name']}: {status}")
+                if not tc["passed"] and "error" in tc:
+                    print(f"      Error: {tc['error']}")
+                elif not tc["passed"]:
+                    print(f"      Expected: {tc.get('expected', 'N/A')}, Actual: {tc.get('actual', 'N/A')}")
+
+        print("\n" + "-"*60)
+        total = results['passed'] + results['failed']
+        overall_status = "PASS" if results['failed'] == 0 else "FAIL"
+        print(f"OVERALL: {overall_status} ({results['passed']}/{total} test cases passed)")
+        print(f"  Passed: {results['passed']}")
+        print(f"  Failed: {results['failed']}")
+        print("-"*60)
 
         # Exit with non-zero code if any tests failed
         if results['failed'] > 0:
