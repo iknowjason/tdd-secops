@@ -155,30 +155,40 @@ class SentinelTestFramework:
         test_data = ""
         with open(f"test_data/{data_file}", 'r') as file:
             test_data = json.load(file)
-        
+
         if isinstance(test_data, dict):
-            if 'TimeGenerated' not in test_data:
-                test_data['TimeGenerated'] = datetime.utcnow().isoformat()
             test_data = [test_data]
-        elif isinstance(test_data, list):
-            for entry in test_data:
-                if 'TimeGenerated' not in entry:
-                    entry['TimeGenerated'] = datetime.utcnow().isoformat()
-        
+
         print(f"Ingesting test data into table: {table_name}")
-        
+
         stream_name = f"Custom-{table_name}"
-        
+
+        # Send 3 sample logs with pauses between each to handle transient API errors
+        num_samples = 3
+        pause_between_samples = 5
+
         try:
-            self.logs_client.upload(
-                rule_id=DCR_IMMUTABLEID,
-                stream_name=stream_name,
-                logs=test_data
-            )
-            print(f"Successfully ingested test data from {data_file} into {table_name}")
-            print("Waiting for logs to be processed")
-            time.sleep(10) 
-            
+            for i in range(num_samples):
+                # Update TimeGenerated for each sample to current time
+                for entry in test_data:
+                    entry['TimeGenerated'] = datetime.utcnow().isoformat()
+
+                self.logs_client.upload(
+                    rule_id=DCR_IMMUTABLEID,
+                    stream_name=stream_name,
+                    logs=test_data
+                )
+                print(f"Successfully ingested sample {i+1}/{num_samples} from {data_file} into {table_name}")
+
+                # Pause between samples (but not after the last one)
+                if i < num_samples - 1:
+                    print(f"Waiting {pause_between_samples} seconds before next sample...")
+                    time.sleep(pause_between_samples)
+
+            log_process_wait = 10
+            print(f"Waiting {log_process_wait} seconds for logs to be processed...")
+            time.sleep(log_process_wait)
+
         except HttpResponseError as e:
             print(f"Failed to ingest test data: {e}")
             raise
@@ -371,12 +381,14 @@ class SentinelTestFramework:
                             else:
                                 print("Incident title doesn't match rule display name") 
                 
-                print("No matching incidents found yet, waiting")
-                time.sleep(2)
-                
+                poll_interval = 2
+                print(f"No matching incidents found yet, waiting {poll_interval} seconds...")
+                time.sleep(poll_interval)
+
             except Exception as e:
-                print(f"Error checking for incidents: {e}")
-                time.sleep(2)
+                retry_wait = 2
+                print(f"Error checking for incidents: {e}, retrying in {retry_wait} seconds...")
+                time.sleep(retry_wait)
         
         print(f"No matching incidents found after {timeout} seconds")
         return False, incidents_found
@@ -535,8 +547,9 @@ class SentinelTestFramework:
 
         # Short wait for table to be registered in Azure before rule creation
         # This allows query validation to succeed when creating the rule
-        print("Waiting for table registration in Azure...")
-        time.sleep(30)
+        table_registration_wait = 30
+        print(f"Waiting {table_registration_wait} seconds for table registration in Azure...")
+        time.sleep(table_registration_wait)
 
         # Step 2: Create all test rules for this batch
         print("\n--- Step 2: Creating test rules ---")
@@ -564,8 +577,9 @@ class SentinelTestFramework:
 
         # Step 3: Wait for rules to execute
         print("\n--- Step 3: Waiting for rules to execute ---")
-        print("Waiting for rules to execute at least once (5-minute frequency)...")
-        time.sleep(330)  # Wait 5.5 min for rule execution
+        rule_execution_wait = 330
+        print(f"Waiting {rule_execution_wait} seconds ({rule_execution_wait/60:.1f} min) for rules to execute...")
+        time.sleep(rule_execution_wait)
 
         # Step 4: Check for incidents
         print("\n--- Step 4: Checking for incidents ---")
