@@ -189,11 +189,11 @@ class SentinelTestFramework:
 
                 # Pause between samples (but not after the last one)
                 if i < num_samples - 1:
-                    print(f"Waiting {pause_between_samples} seconds before next sample...")
+                    print(f"Waiting {pause_between_samples} seconds before next sample")
                     time.sleep(pause_between_samples)
 
             log_process_wait = 10
-            print(f"Waiting {log_process_wait} seconds for logs to be processed...")
+            print(f"Waiting {log_process_wait} seconds for logs to be processed")
             time.sleep(log_process_wait)
 
         except HttpResponseError as e:
@@ -575,7 +575,7 @@ class SentinelTestFramework:
         # Short wait for table to be registered in Azure before rule creation
         # This allows query validation to succeed when creating the rule
         table_registration_wait = 30
-        print(f"Waiting {table_registration_wait} seconds for table registration in Azure...")
+        print(f"Waiting {table_registration_wait} seconds for table registration in Azure")
         time.sleep(table_registration_wait)
 
         # Step 2: Create all test rules for this batch
@@ -605,7 +605,7 @@ class SentinelTestFramework:
         # Step 3: Wait for rules to execute
         print("\n--- Step 3: Waiting for rules to execute ---")
         rule_execution_wait = 330
-        print(f"Waiting {rule_execution_wait} seconds ({rule_execution_wait/60:.1f} min) for rules to execute...")
+        print(f"Waiting {rule_execution_wait} seconds ({rule_execution_wait/60:.1f} min) for rules to execute")
         time.sleep(rule_execution_wait)
 
         # Step 4: Check for incidents
